@@ -13,6 +13,10 @@ torchvision = "*"
 install = "*"
 matplotlib = "*"
 seaborn = "*"
+tensorflow = "*"
+opencv-python = "*"
+wandb = "*"
+tqdm = "*"
 
 [requires]
 python_version = "3.8"

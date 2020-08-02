@@ -1,21 +1,49 @@
-import os
+from collections import deque
+from copy import deepcopy
+from dataclasses import dataclass
+from random import sample
+from typing import Any, List
 
 import gym
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-from torch.autograd import Variable
-from torch.distributions import Categorical
-import matplotlib.pyplot as plt
-import seaborn as sns
+import wandb
+
+
+@dataclass
+class Sarsd:
+    state: Any
+    action: int
+    reward: float
+    next_state: Any
+    done: bool
+
+    @property
+    def state_tensor(self):
+        return torch.Tensor(self.state)
+
+    @property
+    def next_state_tensor(self):
+        return torch.Tensor(self.next_state)
+
+    @property
+    def reward_tensor(self):
+        return torch.Tensor([self.reward])
+
+    @property
+    def action_tensor(self):
+        return torch.Tensor([self.action])
+
+    @property
+    def done_tensor(self):
+        return torch.Tensor([int(self.done)])
 
 
 class CartPoleMove:
     env = gym.make('CartPole-v0')
 
-    def __init__(self, render=True):
+    def __init__(self, render=False):
         self.current_observation = self.env.reset()
         self.action = None
         self.done = False
@@ -48,156 +76,115 @@ class CartPoleMove:
             )
 
 
-class Policy(nn.Module):
+class DQNModel(nn.Module):
 
-    def __init__(self):
+    def __init__(self, state_dim, num_actions):
         super().__init__()
-        self.num_actions = CartPoleMove.env.action_space.n
-        self.state_dim = CartPoleMove.env.observation_space.shape[0]
+        self.num_actions = num_actions
+        self.state_dim = state_dim
         self.fc1 = nn.Linear(self.state_dim, 256)
-        self.fc2 = nn.Linear(256, self.num_actions)
+        self.fc2 = nn.ReLU()
+        self.fc3 = nn.Linear(256, self.num_actions)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
+        x = self.fc3(x)
         return x
 
 
-restore = True
+def train_step(model: DQNModel, target_model: DQNModel, state_transitions: List[Sarsd], discount_factor=.95,
+               num_actions=2):
+    actions = [s.action for s in state_transitions]
+    current_states = torch.stack([s.state_tensor for s in state_transitions])
+    next_states = torch.stack([s.next_state_tensor for s in state_transitions])
+    done = torch.Tensor([torch.Tensor([0]) if s.done else torch.Tensor([1]) for s in state_transitions])
+    rewards = torch.stack([s.reward_tensor for s in state_transitions])
 
-if restore and os.path.isfile("policy.pt"):
-    policy = torch.load("policy.pt")
-else:
-    policy = Policy()
+    with torch.no_grad():
+        q_vals_next = target_model(next_states).max(-1)
 
-optimizer = optim.Adam(policy.parameters(), lr=0.001)
+    model.optimizer.zero_grad()
+    qvals = model(current_states)
+    one_hot_actions = torch.nn.functional.one_hot(
+         torch.LongTensor(actions),
+        num_actions
+    )
 
-
-def update_policy(states, actions, rewards, log_probs, gamma=.99):
-    """
-    Calculate loss, compute gradients, backpropogate and update policy network params.
-
-    :param states: a list of states in an episode
-    :param actions: a list of actions taken in an episode
-    :param rewards: a list of rewareds earned at each time step
-    :param log_probs: a list of log probabliities of actions taken
-    :param gamma: reward discount factor
-    :return:
-    """
-    loss = []
-    dis_rewards = rewards[:]
-    for i in range(len(dis_rewards) - 2, -1, -1):
-        dis_rewards[i] = dis_rewards[i] + gamma * dis_rewards[i+1]
-
-    dis_rewards = torch.tensor(dis_rewards)
-
-    for log_prob, reward in zip(log_probs, dis_rewards):
-        loss.append(-log_prob * reward)
-
-    loss = torch.cat(loss).sum()
-    optimizer.zero_grad()
+    loss = ((rewards +
+             done*q_vals_next.values - torch.sum(qvals*one_hot_actions, -1))**2
+            ).mean()
     loss.backward()
-    optimizer.step()
+    model.optimizer.step()
+    return loss
 
 
-def get_policy_values(state):
-    state = Variable(torch.from_numpy(state)).type(torch.FloatTensor).unsqueeze(0)
-    policy_values = policy(state)
-    return policy_values
+class ReplayBuffer:
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.queue = deque(maxlen=max_size)
+
+    def insert(self, sars: Sarsd):
+        self.queue.append(sars)
+
+    def sample(self, size: int):
+        assert size <= len(self.queue)
+        return sample(self.queue, size)
 
 
-def generate_episode(t_max=1000):
-    """
-    Generate and episode. Save states, actions, rewards and log probablilities.
-    Update policy
-    :param t_max: maximum timesteps in an episode
-    :return: undiscounted rewards in the episode
-    """
-    states, actions, rewards, log_probs = [], [], [], []
-
-    with CartPoleMove(render=False) as cartpole:
-        for _ in range(t_max):
-            action_probs = F.softmax(
-                get_policy_values(cartpole.current_observation), dim=-1)
-            sampler = Categorical(action_probs)
-            a = sampler.sample()
-            log_prob = sampler.log_prob(a)
-            cartpole.take_move(a.item())
-
-            # collect information from move
-            states.append(cartpole.current_observation)
-            actions.append(cartpole.action)
-            rewards.append(cartpole.reward)
-            log_probs.append(log_prob)
-
-            if cartpole.done:
-                break
-        update_policy(states, actions, rewards, log_probs)
-        return sum(rewards)
+def update_target_model(model, target):
+    target.load_state_dict(deepcopy(model.state_dict()))
 
 
-def play_episodes(num_episodes=10, render=False):
-    """
-    Play some episodes using trained policy.
-    :param num_episodes: num of episodes to play
-    :param render: whther to render a video
-    :return:
-    """
+def main(should_log=False):
+    from tqdm import tqdm
+    if should_log:
+        wandb.init(project='dqn-learning', name='dqn-cartpole')
+    min_rb_size = 10000
+    sample_size = 5000
+    env_steps_before_train_step = 1000
+    target_model_update = 50
+    num_actions = CartPoleMove.env.action_space.n
+    observation_space = CartPoleMove.env.observation_space.shape[0]
+    model = DQNModel(observation_space, num_actions)
+    target = DQNModel(observation_space, num_actions)
 
-    for i in range(num_episodes):
-        rewards = []
-        with CartPoleMove(render=render) as cartpole:
-            for _ in range(1000):
-                action_probs = F.softmax(
-                    get_policy_values(cartpole.current_observation),
-                    dim=-1
-                )
-                sampler = Categorical(action_probs)
-                a = sampler.sample()
-                log_prob = sampler.log_prob(a)
-                cartpole.take_move(a.item())
-                rewards.append(cartpole.reward)
-                if cartpole.done:
-                    print("Episode {} finished with reward {}".
-                          format(i+1, np.sum(rewards)))
-                    break
+    replay_buffer = ReplayBuffer(100000)
+
+    steps_since_train_update = 0
+    epochs_since_target = 0
+    step_num = -1 * min_rb_size
+    progress = tqdm()
+    try:
+        while True:
+            progress.update(1)
+            with CartPoleMove() as cartpole:
+                while not cartpole.done:
+                    obs = cartpole.current_observation
+                    cartpole.random_move()
+                    action = cartpole.action
+                    reward = cartpole.reward
+                    next_observation = cartpole.current_observation
+                    s = Sarsd(obs, action, reward, next_observation, cartpole.done)
+                    replay_buffer.insert(s)
+                    # when the train_step should be performed
+                    if len(replay_buffer.queue) > min_rb_size and steps_since_train_update > env_steps_before_train_step:
+                        loss = train_step(model, target, replay_buffer.sample(sample_size), num_actions)
+                        if should_log:
+                            wandb.log({'loss': loss.detach().item(), 'step': step_num})
+                        print(step_num, loss.detach().item())
+                        steps_since_train_update = 0
+                        epochs_since_target += 1
+                        if epochs_since_target > target_model_update:
+                            print('updating target model.')
+                            update_target_model(model, target)
+                            epochs_since_target = 0
+                    steps_since_train_update += 1
+                    step_num += 1
+    except KeyboardInterrupt:
+        print('Keyboard Interrupt.')
 
 
-num_episodes = 1500
-verbose = True
-print_every = 50
-target_avg_reward_100ep = 195
-running_reward = None
-rewards = []
-running_rewards = []
-restore_model = True
-
-if restore_model and os.path.isfile("policy.pt"):
-    policy = torch.load('policy.pt')
-else:
-    policy = Policy()
-
-optimizer = optim.Adam(policy.parameters(), lr=0.001)
-
-# Generate episodes 'num_episodes' times
-# and update policy after every episode.
-
-for i in range(num_episodes):
-    reward = generate_episode()
-    rewards.append(reward)
-    running_reward = np.mean(rewards[-100:])
-    running_rewards.append(running_reward)
-
-    if verbose:
-        should_print = not i % print_every
-        if should_print:
-            print(f"Episode: {i+1}. Running reward: {running_reward}")
-
-    if i >= 99 and running_reward >= target_avg_reward_100ep:
-        print(f"Episode: {i+1}. Running reward: {running_reward}")
-        print(f"Ran {i+1} episodes. Solved after {i-100+1} episodes.")
-        break
-    elif i == num_episodes-1:
-        print("Couldn't solve after {}".format(num_episodes))
-
-torch.save(policy, "policy.pt")
+if __name__ == '__main__':
+    main(should_log=False)
