@@ -106,15 +106,19 @@ def train_step(model: DQNModel, target_model: DQNModel, state_transitions: List[
         q_vals_next = target_model(next_states).max(-1)
 
     model.optimizer.zero_grad()
-    qvals = model(current_states)
+    qvals_current = model(current_states)
     one_hot_actions = torch.nn.functional.one_hot(
-         torch.LongTensor(actions),
-        num_actions
+         torch.LongTensor(actions), num_actions
     )
 
-    loss = ((rewards +
-             done*q_vals_next.values - torch.sum(qvals*one_hot_actions, -1))**2
-            ).mean()
+    loss = (
+            (
+                    rewards
+                    + done * q_vals_next.values
+                    - torch.sum(qvals_current * one_hot_actions, -1)
+            )**2
+    ).mean()
+
     loss.backward()
     model.optimizer.step()
     return loss
