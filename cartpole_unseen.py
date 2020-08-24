@@ -11,7 +11,6 @@ from tqdm import tqdm
 from collections import deque
 
 
-
 @dataclass
 class StateTransition:
     state: np.ndarray
@@ -43,7 +42,7 @@ class StateTransition:
 
     @property
     def reward_tensor(self):
-        return torch.Tensor([self.reward/100])
+        return torch.Tensor([self.reward / 100])
 
 
 class ReplayBuffer:
@@ -105,15 +104,15 @@ class DQNNetwork(nn.Module):
         self.fc2 = nn.ReLU()
         self.fc3 = nn.Linear(120, n_actions)
         self.optimizer = Adam(self.parameters(), lr=0.01)
-       
+
     def forward(self, observation):
         x = self.fc1(observation)
         x = self.fc2(x)
         action_probs = self.fc3(x)
         return action_probs
 
-class DQNModelsHandler:
 
+class DQNModelsHandler:
     def __init__(self, env_class: CartpoleEnv, buffer_size):
         self.environment_class = env_class
         self.n_states = env_class.n_states()
@@ -124,7 +123,7 @@ class DQNModelsHandler:
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.episode_count = 0
         self.rolling_reward = deque(maxlen=12)
-       
+
     def train_step(self, dis_fact=0.99):
         trans_sts = self.replay_buffer.sample(self._sampling_size)
         states = torch.stack([trans.state_tensor for trans in trans_sts])
@@ -146,7 +145,8 @@ class DQNModelsHandler:
                 rewards
                 + (not_done * qvals_predicted.values)
                 - torch.sum(qvals_current * one_hot_actions, -1)
-            ) ** 2
+            )
+            ** 2
         ).mean()
         loss.backward()
         self.model.optimizer.step()
@@ -156,7 +156,7 @@ class DQNModelsHandler:
         state_dict = deepcopy(self.model.state_dict())
         self.target_model.load_state_dict(state_dict)
         print(self.get_current_loss())
-       
+
     def get_current_loss(self):
         return self._loss.detach().item()
 
@@ -183,9 +183,11 @@ class DQNModelsHandler:
         return reward
 
     def get_rolling_reward(self):
-        return sum(self.rolling_reward)/len(self.rolling_reward)
-   
-    def set_model_updt_criteria(self, min_samples_before_update, update_every, sampling_size):
+        return sum(self.rolling_reward) / len(self.rolling_reward)
+
+    def set_model_updt_criteria(
+        self, min_samples_before_update, update_every, sampling_size
+    ):
         self._min_samples_before_update = min_samples_before_update
         self._update_every = update_every
         self._sampling_size = sampling_size
@@ -193,14 +195,14 @@ class DQNModelsHandler:
     @property
     def n_steps(self):
         return self.replay_buffer.idx
-   
+
     def matches_update_criteria(self):
         if self.replay_buffer.idx >= self._min_samples_before_update:
             if self.episode_count % self._update_every == 0:
                 return True
         return False
 
-   
+
 def main():
     env_class = CartpoleEnv
     buffer_size = 100000
@@ -209,9 +211,7 @@ def main():
     minimum_samples_before_update = 10000
     models_handler = DQNModelsHandler(env_class, buffer_size)
     models_handler.set_model_updt_criteria(
-        minimum_samples_before_update,
-        update_every_nth_episode,
-        sampling_size
+        minimum_samples_before_update, update_every_nth_episode, sampling_size
     )
 
     progress = tqdm()
@@ -221,10 +221,11 @@ def main():
             models_handler.play_episode()
             if models_handler.episode_count % 100 == 0:
                 models_handler.check_reward()
-                print('rolling_reward: ', models_handler.get_rolling_reward())
-               
+                print("rolling_reward: ", models_handler.get_rolling_reward())
+
     except KeyboardInterrupt:
         pass
-   
+
+
 if __name__ == "__main__":
     main()
