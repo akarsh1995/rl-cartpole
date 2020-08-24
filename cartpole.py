@@ -8,6 +8,7 @@ import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 import wandb
 
 
@@ -41,7 +42,7 @@ class Sarsd:
 
 
 class CartPoleMove:
-    env = gym.make('CartPole-v0')
+    env = gym.make("CartPole-v0")
 
     def __init__(self, render=False):
         self.current_observation = self.env.reset()
@@ -77,7 +78,6 @@ class CartPoleMove:
 
 
 class DQNModel(nn.Module):
-
     def __init__(self, state_dim, num_actions):
         super().__init__()
         self.num_actions = num_actions
@@ -94,12 +94,19 @@ class DQNModel(nn.Module):
         return x
 
 
-def train_step(model: DQNModel, target_model: DQNModel, state_transitions: List[Sarsd], discount_factor=.95,
-               num_actions=2):
+def train_step(
+    model: DQNModel,
+    target_model: DQNModel,
+    state_transitions: List[Sarsd],
+    discount_factor=0.95,
+    num_actions=2,
+):
     actions = [s.action for s in state_transitions]
     current_states = torch.stack([s.state_tensor for s in state_transitions])
     next_states = torch.stack([s.next_state_tensor for s in state_transitions])
-    done = torch.Tensor([torch.Tensor([0]) if s.done else torch.Tensor([1]) for s in state_transitions])
+    done = torch.Tensor(
+        [torch.Tensor([0]) if s.done else torch.Tensor([1]) for s in state_transitions]
+    )
     rewards = torch.stack([s.reward_tensor for s in state_transitions])
 
     with torch.no_grad():
@@ -108,15 +115,16 @@ def train_step(model: DQNModel, target_model: DQNModel, state_transitions: List[
     model.optimizer.zero_grad()
     qvals_current = model(current_states)
     one_hot_actions = torch.nn.functional.one_hot(
-         torch.LongTensor(actions), num_actions
+        torch.LongTensor(actions), num_actions
     )
 
     loss = (
-            (
-                    rewards
-                    + done * q_vals_next.values
-                    - torch.sum(qvals_current * one_hot_actions, -1)
-            )**2
+        (
+            rewards
+            + ( done * q_vals_next.values )
+            - torch.sum(qvals_current * one_hot_actions, -1)
+        )
+        ** 2
     ).mean()
 
     loss.backward()
@@ -143,8 +151,9 @@ def update_target_model(model, target):
 
 def main(should_log=False):
     from tqdm import tqdm
+
     if should_log:
-        wandb.init(project='dqn-learning', name='dqn-cartpole')
+        wandb.init(project="dqn-learning", name="dqn-cartpole")
     min_rb_size = 10000
     sample_size = 5000
     env_steps_before_train_step = 1000
@@ -173,22 +182,30 @@ def main(should_log=False):
                     s = Sarsd(obs, action, reward, next_observation, cartpole.done)
                     replay_buffer.insert(s)
                     # when the train_step should be performed
-                    if len(replay_buffer.queue) > min_rb_size and steps_since_train_update > env_steps_before_train_step:
-                        loss = train_step(model, target, replay_buffer.sample(sample_size), num_actions)
+                    if (
+                        len(replay_buffer.queue) > min_rb_size
+                        and steps_since_train_update > env_steps_before_train_step
+                    ):
+                        loss = train_step(
+                            model,
+                            target,
+                            replay_buffer.sample(sample_size),
+                            num_actions,
+                        )
                         if should_log:
-                            wandb.log({'loss': loss.detach().item(), 'step': step_num})
+                            wandb.log({"loss": loss.detach().item(), "step": step_num})
                         print(step_num, loss.detach().item())
                         steps_since_train_update = 0
                         epochs_since_target += 1
                         if epochs_since_target > target_model_update:
-                            print('updating target model.')
+                            print("updating target model.")
                             update_target_model(model, target)
                             epochs_since_target = 0
                     steps_since_train_update += 1
                     step_num += 1
     except KeyboardInterrupt:
-        print('Keyboard Interrupt.')
+        print("Keyboard Interrupt.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main(should_log=False)
