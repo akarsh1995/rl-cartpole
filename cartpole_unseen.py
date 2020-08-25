@@ -1,15 +1,14 @@
 import gym
-import torch
-import torch.nn as nn
 import numpy as np
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any
 from random import sample
-from torch.optim.adam import Adam
 from copy import deepcopy
 from tqdm import tqdm
 from collections import deque
-
+from models import DQNNetwork
+import torch
+from utils import exp_decay
 
 @dataclass
 class StateTransition:
@@ -63,22 +62,23 @@ class ReplayBuffer:
 
 
 class CartpoleEnv:
-    env = gym.make("CartPole-v0")
 
     def __init__(self, maintain_buffer=True):
+        self.env = gym.make("CartPole-v0")
         self.current_state = self.env.reset()
         self.episode_finished = False
+        self.reward = 0
 
     def __enter__(self, *args, **kwargs):
         return self
 
-    @classmethod
-    def n_actions(cls):
-        return cls.env.action_space.n
+    @property
+    def n_actions(self):
+        return self.env.action_space.n
 
-    @classmethod
-    def n_states(cls):
-        return cls.env.observation_space.shape[0]
+    @property
+    def n_states(self):
+        return self.env.observation_space.shape[0]
 
     def __exit__(self, *args, **kwargs):
         self.env.close()
@@ -87,6 +87,7 @@ class CartpoleEnv:
         step = self.env.step(action)
         st_tr = StateTransition(self.current_state, action, *step)
         self.current_state = step[0]
+        self.reward += 1
         self.episode_finished = st_tr.done
         return st_tr
 
@@ -95,34 +96,19 @@ class CartpoleEnv:
         return self.step(sample_action)
 
 
-class DQNNetwork(nn.Module):
-    def __init__(self, n_states, n_actions):
-        super().__init__()
-        self.n_states = n_states
-        self.n_actions = n_actions
-        self.fc1 = nn.Linear(n_states, 120)  # 6*6 from image dimension
-        self.fc2 = nn.ReLU()
-        self.fc3 = nn.Linear(120, n_actions)
-        self.optimizer = Adam(self.parameters(), lr=0.01)
-
-    def forward(self, observation):
-        x = self.fc1(observation)
-        x = self.fc2(x)
-        action_probs = self.fc3(x)
-        return action_probs
-
-
 class DQNModelsHandler:
     def __init__(self, env_class: CartpoleEnv, buffer_size):
         self.environment_class = env_class
-        self.n_states = env_class.n_states()
-        self.n_actions = env_class.n_actions()
+        with env_class() as env:
+            self.n_states = env.n_states
+            self.n_actions = env.n_actions
         self.model = DQNNetwork(self.n_states, self.n_actions)
         self.target_model = DQNNetwork(self.n_states, self.n_actions)
-        self._loss = None
+        self.rolling_loss = deque(maxlen=12)
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.episode_count = 0
         self.rolling_reward = deque(maxlen=12)
+        self.model_update_count = 0
 
     def train_step(self, dis_fact=0.99):
         trans_sts = self.replay_buffer.sample(self._sampling_size)
@@ -150,40 +136,46 @@ class DQNModelsHandler:
         ).mean()
         loss.backward()
         self.model.optimizer.step()
-        self._loss = loss
+        self.rolling_loss.append(loss.detach().item())
+        self.model_update_count += 1
 
     def update_target_model(self):
         state_dict = deepcopy(self.model.state_dict())
         self.target_model.load_state_dict(state_dict)
-        print(self.get_current_loss())
-
-    def get_current_loss(self):
-        return self._loss.detach().item()
 
     def play_episode(self, update_model=True):
         with self.environment_class() as env:
             while not env.episode_finished:
-                state_trans = env.random_step()
+                if (exp_decay(self.n_steps) > np.random.random()
+                     and self.n_steps > self._min_samples_before_update):
+                    state_trans = env.random_step()
+                else:
+                    state = env.current_state
+                    predicted_action = self.target_model(torch.Tensor(state))
+                    state_trans = env.step(predicted_action.argmax().item())
+
                 self.replay_buffer.insert(state_trans)
                 if update_model:
                     if self.matches_update_criteria():
                         self.train_step()
                         self.update_target_model()
-        self.episode_count += 1
+                        self.check_reward()
+                        self.verbose_training()
+            self.episode_count += 1
 
     def check_reward(self):
-        reward = 0
-        with self.environment_class() as env:
-            while not env.episode_finished:
-                reward += 1
-                state = env.current_state
+        with self.environment_class() as reward_env:
+            while not reward_env.episode_finished:
+                state = reward_env.current_state
                 predicted_action = self.target_model(torch.Tensor(state))
-                env.step(predicted_action.argmax().item())
-        self.rolling_reward.append(reward)
-        return reward
+                reward_env.step(predicted_action.argmax().item())
+        self.rolling_reward.append(reward_env.reward)
 
     def get_rolling_reward(self):
         return sum(self.rolling_reward) / len(self.rolling_reward)
+
+    def get_rolling_loss(self):
+        return sum(self.rolling_loss) / len(self.rolling_loss)
 
     def set_model_updt_criteria(
         self, min_samples_before_update, update_every, sampling_size
@@ -202,6 +194,10 @@ class DQNModelsHandler:
                 return True
         return False
 
+    def verbose_training(self):
+        print("Rolling_reward: ", self.get_rolling_reward())
+        print("Rolling Loss:", self.get_rolling_loss())
+
 
 def main():
     env_class = CartpoleEnv
@@ -214,14 +210,11 @@ def main():
         minimum_samples_before_update, update_every_nth_episode, sampling_size
     )
 
-    progress = tqdm()
+    # progress = tqdm()
     try:
         while True:
-            progress.update(1)
+            # progress.update(1)
             models_handler.play_episode()
-            if models_handler.episode_count % 100 == 0:
-                models_handler.check_reward()
-                print("rolling_reward: ", models_handler.get_rolling_reward())
 
     except KeyboardInterrupt:
         pass
