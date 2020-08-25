@@ -8,7 +8,7 @@ from tqdm import tqdm
 from collections import deque
 from models import DQNNetwork
 import torch
-from utils import exp_decay
+from utils import exp_decay, online_logger
 import datetime
 
 @dataclass
@@ -195,7 +195,12 @@ class DQNModelsHandler:
                 return True
         return False
 
-    def verbose_training(self):
+    def verbose_training(self, online_logging=True):
+        if online_logging:
+            online_logger.log({
+                "Rolling_reward: ": self.get_rolling_reward(),
+                "Rolling Loss:": self.get_rolling_loss()
+            })
         print("Rolling_reward: ", self.get_rolling_reward())
         print("Rolling Loss:", self.get_rolling_loss())
 
@@ -210,14 +215,14 @@ def main():
     models_handler.set_model_updt_criteria(
         minimum_samples_before_update, update_every_nth_episode, sampling_size
     )
-    model_save_at_nth_step = 50
+    model_save_at_nth_update = 50
     # progress = tqdm()
     try:
         while True:
             # progress.update(1)
             models_handler.play_episode()
             update_count = models_handler.model_update_count
-            if update_count % model_save_at_nth_step == 0 and update_count > model_save_at_nth_step:
+            if update_count % model_save_at_nth_update == 0 and update_count >= model_save_at_nth_update:
                 model_save_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
                 torch.save(models_handler.target_model.state_dict(), model_save_name)
     except KeyboardInterrupt:
