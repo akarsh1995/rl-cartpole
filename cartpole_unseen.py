@@ -1,4 +1,5 @@
 import gym
+import os
 import numpy as np
 from dataclasses import dataclass
 from typing import Any
@@ -174,9 +175,14 @@ class DQNModelsHandler:
             self.episode_count += 1
 
     def save_target_model(self):
-        model_save_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
+        file_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
+        model_save_name = f"/tmp/{file_name}"
         torch.save(self.target_model.state_dict(), model_save_name)
-       
+        if self._online_log:
+            online_logger.save(model_save_name)
+        else:
+            os.rename(model_save_name, f'./{file_name}')
+
     def check_reward(self):
         with self.environment_class() as reward_env:
             while not reward_env.episode_finished:
@@ -228,7 +234,7 @@ def main():
     sampling_size = 5000
     minimum_samples_before_update = 10000
     model_save_at_nth_update = 30
-    models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=False)
+    models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=True)
     models_handler.set_model_updt_criteria(
         minimum_samples_before_update, update_every_nth_episode, sampling_size,
         model_save_at_nth_update
