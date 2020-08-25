@@ -8,8 +8,11 @@ from tqdm import tqdm
 from collections import deque
 from models import DQNNetwork
 import torch
-from utils import exp_decay, online_logger
+from utils import exp_decay
 import datetime
+import wandb as online_logger
+
+
 
 @dataclass
 class StateTransition:
@@ -63,7 +66,6 @@ class ReplayBuffer:
 
 
 class CartpoleEnv:
-
     def __init__(self, maintain_buffer=True):
         self.env = gym.make("CartPole-v0")
         self.current_state = self.env.reset()
@@ -98,13 +100,16 @@ class CartpoleEnv:
 
 
 class DQNModelsHandler:
-    def __init__(self, env_class: CartpoleEnv, buffer_size):
+    def __init__(self, env_class: CartpoleEnv, buffer_size,lr=0.001, online_log=True):
         self.environment_class = env_class
         with env_class() as env:
             self.n_states = env.n_states
             self.n_actions = env.n_actions
-        self.model = DQNNetwork(self.n_states, self.n_actions, lr=0.001)
-        self.target_model = DQNNetwork(self.n_states, self.n_actions, lr=0.001)
+        if online_log:
+            online_logger.init(f"cart-{datetime.datetime.now().isoformat()}")
+        self._online_log = online_log
+        self.model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
+        self.target_model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
         self.rolling_loss = deque(maxlen=12)
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.episode_count = 0
@@ -138,17 +143,19 @@ class DQNModelsHandler:
         loss.backward()
         self.model.optimizer.step()
         self.rolling_loss.append(loss.detach().item())
-        self.model_update_count += 1
 
     def update_target_model(self):
         state_dict = deepcopy(self.model.state_dict())
         self.target_model.load_state_dict(state_dict)
+        self.model_update_count += 1
 
     def play_episode(self, update_model=True):
         with self.environment_class() as env:
             while not env.episode_finished:
-                if (exp_decay(self.n_steps) > np.random.random()
-                     and self.n_steps > self._min_samples_before_update):
+                if (
+                    exp_decay(self.n_steps) > np.random.random()
+                    and self.n_steps > self._min_samples_before_update
+                ):
                     state_trans = env.random_step()
                 else:
                     state = env.current_state
@@ -162,8 +169,14 @@ class DQNModelsHandler:
                         self.update_target_model()
                         self.check_reward()
                         self.verbose_training()
+                        if self.model_update_count % self._model_save_every_nth_update == 0:
+                            self.save_target_model()
             self.episode_count += 1
 
+    def save_target_model(self):
+        model_save_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
+        torch.save(self.target_model.state_dict(), model_save_name)
+       
     def check_reward(self):
         with self.environment_class() as reward_env:
             while not reward_env.episode_finished:
@@ -179,11 +192,13 @@ class DQNModelsHandler:
         return sum(self.rolling_loss) / len(self.rolling_loss)
 
     def set_model_updt_criteria(
-        self, min_samples_before_update, update_every, sampling_size
+            self, min_samples_before_update, update_every, sampling_size,
+            model_save_every_nth_update
     ):
         self._min_samples_before_update = min_samples_before_update
         self._update_every = update_every
         self._sampling_size = sampling_size
+        self._model_save_every_nth_update = model_save_every_nth_update
 
     @property
     def n_steps(self):
@@ -195,14 +210,15 @@ class DQNModelsHandler:
                 return True
         return False
 
-    def verbose_training(self, online_logging=True):
-        if online_logging:
-            online_logger.log({
-                "Rolling_reward: ": self.get_rolling_reward(),
-                "Rolling Loss:": self.get_rolling_loss()
-            })
-        print("Rolling_reward: ", self.get_rolling_reward())
-        print("Rolling Loss:", self.get_rolling_loss())
+    def verbose_training(self):
+        logging_dict = {
+            "Rolling_reward: ": self.get_rolling_reward(),
+            "Rolling Loss:": self.get_rolling_loss(),
+        }
+        if self._online_log:
+            online_logger.log(logging_dict)
+        else:
+            print(logging_dict)
 
 
 def main():
@@ -211,20 +227,17 @@ def main():
     update_every_nth_episode = 500
     sampling_size = 5000
     minimum_samples_before_update = 10000
-    models_handler = DQNModelsHandler(env_class, buffer_size)
+    model_save_at_nth_update = 30
+    models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=False)
     models_handler.set_model_updt_criteria(
-        minimum_samples_before_update, update_every_nth_episode, sampling_size
+        minimum_samples_before_update, update_every_nth_episode, sampling_size,
+        model_save_at_nth_update
     )
-    model_save_at_nth_update = 50
-    # progress = tqdm()
+    progress = tqdm()
     try:
         while True:
-            # progress.update(1)
+            progress.update(1)
             models_handler.play_episode()
-            update_count = models_handler.model_update_count
-            if update_count % model_save_at_nth_update == 0 and update_count >= model_save_at_nth_update:
-                model_save_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
-                torch.save(models_handler.target_model.state_dict(), model_save_name)
     except KeyboardInterrupt:
         pass
 
