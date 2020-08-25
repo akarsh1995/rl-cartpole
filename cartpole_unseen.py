@@ -9,6 +9,7 @@ from collections import deque
 from models import DQNNetwork
 import torch
 from utils import exp_decay
+import datetime
 
 @dataclass
 class StateTransition:
@@ -102,8 +103,8 @@ class DQNModelsHandler:
         with env_class() as env:
             self.n_states = env.n_states
             self.n_actions = env.n_actions
-        self.model = DQNNetwork(self.n_states, self.n_actions)
-        self.target_model = DQNNetwork(self.n_states, self.n_actions)
+        self.model = DQNNetwork(self.n_states, self.n_actions, lr=0.001)
+        self.target_model = DQNNetwork(self.n_states, self.n_actions, lr=0.001)
         self.rolling_loss = deque(maxlen=12)
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.episode_count = 0
@@ -202,20 +203,23 @@ class DQNModelsHandler:
 def main():
     env_class = CartpoleEnv
     buffer_size = 100000
-    update_every_nth_episode = 50
+    update_every_nth_episode = 500
     sampling_size = 5000
     minimum_samples_before_update = 10000
     models_handler = DQNModelsHandler(env_class, buffer_size)
     models_handler.set_model_updt_criteria(
         minimum_samples_before_update, update_every_nth_episode, sampling_size
     )
-
+    model_save_at_nth_step = 50
     # progress = tqdm()
     try:
         while True:
             # progress.update(1)
             models_handler.play_episode()
-
+            update_count = models_handler.model_update_count
+            if update_count % model_save_at_nth_step == 0 and update_count > model_save_at_nth_step:
+                model_save_name = f"{datetime.datetime.now().strftime('%H:%M:%S')}.pth"
+                torch.save(models_handler.target_model.state_dict(), model_save_name)
     except KeyboardInterrupt:
         pass
 
