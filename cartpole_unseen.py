@@ -101,7 +101,7 @@ class CartpoleEnv:
 
 
 class DQNModelsHandler:
-    def __init__(self, env_class: CartpoleEnv, buffer_size,lr=0.001, online_log=True):
+    def __init__(self, env_class: CartpoleEnv, buffer_size, lr=0.001, online_log=True):
         self.environment_class = env_class
         with env_class() as env:
             self.n_states = env.n_states
@@ -170,7 +170,10 @@ class DQNModelsHandler:
                         self.update_target_model()
                         self.check_reward()
                         self.verbose_training()
-                        if self.model_update_count % self._model_save_every_nth_update == 0:
+                        if (
+                            self.model_update_count % self._model_save_every_nth_update
+                            == 0
+                        ):
                             self.save_target_model()
             self.episode_count += 1
 
@@ -181,7 +184,7 @@ class DQNModelsHandler:
         if self._online_log:
             online_logger.save(model_save_name)
         else:
-            os.rename(model_save_name, f'./{file_name}')
+            os.rename(model_save_name, f"./{file_name}")
 
     def check_reward(self):
         with self.environment_class() as reward_env:
@@ -198,8 +201,11 @@ class DQNModelsHandler:
         return sum(self.rolling_loss) / len(self.rolling_loss)
 
     def set_model_updt_criteria(
-            self, min_samples_before_update, update_every, sampling_size,
-            model_save_every_nth_update
+        self,
+        min_samples_before_update,
+        update_every,
+        sampling_size,
+        model_save_every_nth_update,
     ):
         self._min_samples_before_update = min_samples_before_update
         self._update_every = update_every
@@ -236,8 +242,10 @@ def main():
     model_save_at_nth_update = 30
     models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=True)
     models_handler.set_model_updt_criteria(
-        minimum_samples_before_update, update_every_nth_episode, sampling_size,
-        model_save_at_nth_update
+        minimum_samples_before_update,
+        update_every_nth_episode,
+        sampling_size,
+        model_save_at_nth_update,
     )
     progress = tqdm()
     try:
