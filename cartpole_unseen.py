@@ -107,6 +107,8 @@ class DQNModelsHandler:
         with env_class() as env:
             self.n_states = env.n_states
             self.n_actions = env.n_actions
+        if online_log:
+            online_logger.init(name=f"cart-{datetime.datetime.now().isoformat()}")
         self._online_log = online_log
         self.model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
         self.target_model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
@@ -257,5 +259,4 @@ def train_model(buffer_size=100000,
 
 if __name__ == "__main__":
     import argh
-    online_logger.init(name=f"cart-{datetime.datetime.now().isoformat()}")
     argh.dispatch_command(train_model)
