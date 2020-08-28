@@ -108,7 +108,7 @@ class DQNModelsHandler:
             self.n_states = env.n_states
             self.n_actions = env.n_actions
         if online_log:
-            online_logger.init(f"cart-{datetime.datetime.now().isoformat()}")
+            online_logger.init(name=f"cart-{datetime.datetime.now().isoformat()}")
         self._online_log = online_log
         self.model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
         self.target_model = DQNNetwork(self.n_states, self.n_actions, lr=lr)
