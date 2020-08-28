@@ -1,3 +1,4 @@
+#!python
 import gym
 import os
 import numpy as np
@@ -233,14 +234,14 @@ class DQNModelsHandler:
             print(logging_dict)
 
 
-def main():
+def train_model(buffer_size=100000,
+                update_every_nth_episode=500,
+                sampling_size=3000,
+                minimum_samples_before_update=10000,
+                model_save_at_nth_update=30,
+                online_log=False):
     env_class = CartpoleEnv
-    buffer_size = 100000
-    update_every_nth_episode = 500
-    sampling_size = 5000
-    minimum_samples_before_update = 10000
-    model_save_at_nth_update = 30
-    models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=True)
+    models_handler = DQNModelsHandler(env_class, buffer_size, lr=0.001, online_log=online_log)
     models_handler.set_model_updt_criteria(
         minimum_samples_before_update,
         update_every_nth_episode,
@@ -257,4 +258,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argh
+    argh.dispatch_command(train_model)
