@@ -67,7 +67,7 @@ class ReplayBuffer:
 
 
 class CartpoleEnv:
-    def __init__(self, maintain_buffer=True):
+    def __init__(self):
         self.env = gym.make("CartPole-v0")
         self.current_state = self.env.reset()
         self.episode_finished = False
