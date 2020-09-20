@@ -188,11 +188,12 @@ class DQNModelsHandler:
             os.rename(model_save_name, f"./{file_name}")
 
     def check_reward(self):
-        with self.environment_class() as reward_env:
-            while not reward_env.episode_finished:
-                state = reward_env.current_state
-                predicted_action = self.target_model(torch.Tensor(state))
-                reward_env.step(predicted_action.argmax().item())
+        with torch.no_grad():
+            with self.environment_class() as reward_env:
+                while not reward_env.episode_finished:
+                    state = reward_env.current_state
+                    predicted_action = self.target_model(torch.Tensor(state))
+                    reward_env.step(predicted_action.argmax().item())
         self.rolling_reward.append(reward_env.reward)
 
     def get_rolling_reward(self):
