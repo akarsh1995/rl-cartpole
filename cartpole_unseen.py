@@ -2,69 +2,14 @@
 import gym
 import os
 import numpy as np
-from dataclasses import dataclass
-from typing import Any
-from random import sample
 from copy import deepcopy
 from tqdm import tqdm
 from collections import deque
 from models import DQNNetwork
 import torch
-from utils import exp_decay
+from utils import exp_decay, ReplayBuffer, StateTransition
 import datetime
 import wandb as online_logger
-
-
-
-@dataclass
-class StateTransition:
-    state: np.ndarray
-    action: int
-    next_state: np.ndarray
-    reward: int
-    done: bool
-    info: Any
-
-    @property
-    def state_tensor(self):
-        return torch.Tensor(self.state)
-
-    @property
-    def next_state_tensor(self):
-        return torch.Tensor(self.next_state)
-
-    @property
-    def action_tensor(self):
-        return torch.Tensor([self.action])
-
-    @property
-    def not_done_tensor(self):
-        return torch.Tensor([int(not self.done)])
-
-    @property
-    def action_tensor(self):
-        return torch.Tensor([int(self.action)])
-
-    @property
-    def reward_tensor(self):
-        return torch.Tensor([self.reward / 100])
-
-
-class ReplayBuffer:
-    def __init__(self, buffer_size=100000):
-        self.buffer = [None] * buffer_size
-        self.idx = 0
-        self.buffer_size = buffer_size
-
-    def insert(self, state_transition: StateTransition):
-        self.buffer[self.idx % self.buffer_size] = state_transition
-        self.idx += 1
-
-    def sample(self, size: int):
-        assert size <= self.idx + 1, "Cant sample for more than buffer size"
-        if self.idx < self.buffer_size:
-            return sample(self.buffer[: self.idx], size)
-        return sample(self.buffer, size)
 
 
 class CartpoleEnv:

@@ -2,7 +2,11 @@ from dataclasses import dataclass
 import torch
 from random import sample
 import numpy as np
+import os
+from pathlib import Path
 
+def get_temp_dir(*paths_to_join):
+    return Path(os.environ["TMPDIR"]).joinpath(*paths_to_join)
 
 def exp_decay(epoch):
     k = 0.999998

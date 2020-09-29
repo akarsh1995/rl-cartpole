@@ -32,13 +32,12 @@ class ConvNet(nn.Module):
             nn.Conv2d(16, 32, (4, 4), stride=(2,2)),
             nn.ReLU()
         )
-
-
         self.fc_net = nn.Sequential(
             nn.Linear(self.first_linear, 256),
             nn.ReLU(),
             nn.Linear(256, num_actions)
         )
+        self.optimizer = Adam(self.parameters(), lr=lr)
 
     @property
     def first_linear(self):
@@ -51,5 +50,9 @@ class ConvNet(nn.Module):
         return self.fc_net(conv_latent.flatten(1))
 
 if __name__ == '__main__':
-    m = ConvNet((4, 84, 84), 4)
-    fake_tensor = torch.zeros((1, 4, 84, 84))
+    w = 84
+    h = 84
+    stack = 4
+    m = ConvNet((stack, h, w), 4)
+    fake_tensor = torch.zeros((4, *(stack, h, w)))
+    print(m(fake_tensor))
