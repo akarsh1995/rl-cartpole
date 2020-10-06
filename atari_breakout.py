@@ -1,3 +1,5 @@
+import os
+from datetime import datetime
 from copy import deepcopy
 from dataclasses import field, dataclass
 from atari_frames_wrapper import Frame
@@ -6,6 +8,7 @@ import gym
 from models import ConvNet
 import torch
 from typing import Callable
+import wandb
 
 @dataclass
 class ModelsHandler:
@@ -55,6 +58,13 @@ class ModelsHandler:
         self.tgt_model.load_state_dict(state_dict)
         self.model_update_count += 1
 
+    def save_target_model(self):
+        file_name = f"{datetime.now().strftime('%H:%M:%S')}.pth"
+        temp_dir = os.environ.get('TMPDIR', '/tmp')
+        file_name = os.path.join(temp_dir, file_name)
+        torch.save(self.model, file_name)
+        wandb.save(file_name)
+
    
 @dataclass
 class EpisodeManager:
@@ -67,14 +77,14 @@ class EpisodeManager:
         self.episodes = 0
         self.replay_buffer = ReplayBuffer(self.buffer_size)
 
-    def play_episode(self, frame_wrapper: Frame, render=False, action_manager: Callable = None):
+    def play_episode(self, frame_wrapper: Frame, render=False, model: Callable = None):
         prev_obs = frame_wrapper.reset(self.env)
         done = False
         while not done:
             if render:
                 self.env.render()
-            if action_manager is not None:
-                action = action_manager()
+            if model is not None:
+                action = model(prev_obs)
             else:
                 action = self.env.action_space.sample()
             obs, reward, done, info = self.step(action, frame_wrapper)
@@ -90,27 +100,38 @@ class EpisodeManager:
             out = self.env.step(action)
         return out
 
-       
-if __name__ == '__main__':
-    height = 84
-    width = 84
-    num_stacks = 4
-    lr = 0.001
-    num_actions = 4
-    model_manager = ModelsHandler((num_stacks, height, width), num_actions, lr)
-    ep_mgr = EpisodeManager("Breakout-v0", 100000)
-    f = Frame(height, width, num_stacks)
 
+def train_model(
+        height = 84,
+        width = 84,
+        num_stacks = 4,
+        lr = 0.001,
+        num_actions = 4,
+        buffer_size = 100000,
+        min_steps_bef_first_update=10000,
+        train_step_every_nth_episode=30,
+        sample_size=500,
+        target_update_every=50,
+):
+    wandb.init()
+    model_manager = ModelsHandler((num_stacks, height, width), num_actions, lr)
+    ep_mgr = EpisodeManager("Breakout-v0", buffer_size)
+    f = Frame(height, width, num_stacks)
     try:
-        while True:
+        while ep_mgr.episodes < 1000:
             ep_mgr.play_episode(f)
-            if ep_mgr.num_steps > 1000:
-                if ep_mgr.episodes % 5 == 0:
-                    loss = model_manager.train_step(ep_mgr.replay_buffer, 500)
-                    if ep_mgr.episodes % 20:
-                        model_manager.update_target_model()
-                    print(loss)
-    except KeyboardInterrupt:
-        print('some interrupt occur.')
-    finally:
-        ep_mgr.env.close()
+            if ep_mgr.num_steps > min_steps_bef_first_update:
+                if ep_mgr.episodes % train_step_every_nth_episode == 0:
+                    loss = model_manager.train_step(ep_mgr.replay_buffer, sample_size)
+                    wandb.log({'loss': loss, 'episodes': ep_mgr.episodes})
+                if ep_mgr.episodes % target_update_every == 0:
+                    model_manager.update_target_model()
+                    model_manager.save_target_model()
+
+    except Exception as e:
+        print(e)
+
+
+if __name__ == '__main__':
+    import argh
+    argh.dispatch_command(train_model)
