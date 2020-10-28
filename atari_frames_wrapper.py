@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+
 from models import ConvNet
 
 from torchvision.utils import save_image
@@ -22,6 +23,8 @@ class Frame:
         self.buffer = np.zeros((self.num_stacks, self.height, self.width))
 
     def _preprocess_frame(self, frame):
+        # cutting down irrelevant section of the frame
+        frame = frame[32:-14, 8:-8, :]
         frame = cv2.resize(frame, (self.width, self.height))
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         return frame
@@ -35,7 +38,7 @@ class Frame:
         return self.num_stacks, self.height, self.width
 
     def step(self, env, action=None):
-        if action is not None:
+        if action is None:
             action = env.action_space.sample()
         obs, reward, done, info = env.step(action)
         image_processed = self._preprocess_frame(obs)
@@ -50,14 +53,13 @@ class Frame:
         return self.buffer.copy()
 
     def get_grid(self):
-        stacked = np.expand_dims(self.buffer, 2)
-        stacked = stacked.transpose((3, 2, 0, 1))
+        stacked = np.expand_dims(self.buffer, 1)
         imgs_tensor = torch.tensor(stacked)
         grid_image = utils.make_grid(imgs_tensor, 1)
         return grid_image.numpy().transpose((1, 2, 0))
 
 if __name__ == '__main__':
-    save_images = False
+    save_images = True
     env = gym.make("Breakout-v0")
     obs = env.reset()
     f = Frame(640, 480, 4)
